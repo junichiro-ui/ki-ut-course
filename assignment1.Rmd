@@ -19,24 +19,40 @@ Followed the instructions on CRAN and installed the latest R and RStudio.
 #### 1. Read the research article of the hands-on working group you are assigned to (see file “Student Groups.pdf” in shared folder General course material).
 #### 2. Answer the following questions
 ##### a. What is the medically relevant insight from the article?
+
 The study investigates selective insulin resistance in human white adipose tissue (WAT) in the obese state and how it is altered by weight loss following bariatric surgery. The key medical insight is that obesity leads to a selective insulin response in WAT, where some insulin-regulated genes remain active while others become unresponsive. Importantly, most insulin signaling and gene expression changes are restored after significant weight loss. This research enhances our understanding of adipose tissue dysfunction in obesity and type 2 diabetes, providing potential molecular targets for improving insulin action.
+
 ##### b. Which genomics technology/ technologies were used?
+
 The study utilized RNAseq, specifically 5’ cap analysis of gene expression (CAGE), to analyze transcriptional responses to insulin in subcutaneous WAT. This method allowed the identification of transcription start sites and gene expression levels. The study also used bioinformatic analyses, including differential expression analysis and transcription factor binding site enrichment, to interpret the insulin response at the transcriptional level.
+
 #### 3. Further related research questions
 ##### a. List and explain at least three questions/ hypotheses you can think of that extend the analysis presented in the paper.
+
 **Does selective insulin resistance in WAT affect systemic metabolic homeostasis, and how does it compare to liver and muscle tissue?**
+
 Since insulin resistance in different tissues contributes to metabolic disorders, it would be valuable to compare the transcriptional response in WAT with that in liver and muscle to determine tissue-specific contributions to overall insulin resistance in obesity.
+
 **What are the epigenetic changes associated with insulin resistance in WAT, and are they reversible after weight loss?**
+
 The study identifies transcriptional changes after weight loss, but it does not explore whether these changes are associated with epigenetic modifications (e.g., DNA methylation, histone modifications). Investigating this could provide insights into the long-term effects of weight loss on insulin sensitivity.
+
 **Are there specific genetic or molecular markers that predict whether an individual will regain insulin sensitivity after weight loss?**
+
 Some individuals may experience only partial recovery of insulin sensitivity after bariatric surgery. Identifying molecular predictors (e.g., gene expression profiles, transcript isoforms) could help personalize treatment approaches for obesity and diabetes.
+
 ##### b. [Optional] Devise a computational analysis strategy for (some of) the listed questions under 3a.
+
 **Epigenetic changes**
+
 Perform whole-genome bisulfite sequencing (WGBS) and ChIP-Seq for histone modifications in WAT
+
 **selective insulin resistance across tissues**
+
 Conduct multi-tissue RNAseq (WAT, liver, muscle, etc.)
 
 ### Task4
+
 ```{r}
 sqrt(10)  # Square root of 10
 log2(32)  # Log base 2 of 32
@@ -47,6 +63,7 @@ choose(100, 3)  # Arranging 100 genes in triple
 ```
 
 ### Task5
+
 ```{r}
 data("CO2")
 ?CO2 # description of CO2 dataset
@@ -58,23 +75,31 @@ median(CO2$uptake[CO2$Type == "Mississippi"])
 
 ### Task6
 #### 1. a function that calculates the ratio of the mean and the median of a given vector. This is a helpful measure to detect data with outlying values.
+
 ```{r}
 ratio_mean_median <- function(x) {
     mean(x) / median(x)
 }
 ```
+
 #### 2. a function that ignores the lowest and the highest value from a given vector and calculate the mean.
+
 ```{r}
 trimmed_mean <- function(x) {
     mean(x[x != min(x) & x != max(x)])
 }
 ```
+
 #### 3. Read about piping from here:https://r4ds.had.co.nz/pipes.html#pipes (you don’t have to learn everything, a basic understanding of the usage is enough). Write a short (max. 300 characters, no spaces) explanation of why, how, and when not to use pipes.
+
 Pipes (%>%) simplify sequential operations, improving readability. Use them for short, linear transformations. Avoid pipes for long sequences (10+ steps), multiple inputs/outputs, or complex dependencies.
+
 #### 4. Write a short explanation (max. 300 characters, no spaces) of why they could be useful in your work.
+
 The apply family streamlines data analysis by replacing explicit loops, making code more readable and efficient. In RNAseq and genomics, they help process large datasets, compute statistics across genes/samples, and apply transformations efficiently, crucial for differential expression and enrichment analyses.
 
 ### Task7
+
 ```{r}
 # read magic_guys.csv and check the dataflame structure
 setwd("~/Google Drive/My Drive/0_Iden2/KI-UT_doctoral_course")
@@ -85,9 +110,12 @@ str(df)
 summary(df)
 unique(df$species)
 ```
+
 #### 1. Compare the distributions of the body heights of the two species from the 'magic_guys.csv' dataset graphically
 ##### a. using the basic 'hist' function as well as ‘ggplot’ and ‘geom_histogram’ functions from the ggplot2 package. Optimize the plots for example by trying several different 'breaks'. Note that ggplot2-based functions give you many more options for changing the visualization parameters, try some of them.
+
 hist
+
 ```{r}
 length_jedi <- df$length[df$species == "jedi"]
 length_sith <- df$length[df$species == "sith"]
@@ -105,7 +133,9 @@ hist(length_sith, breaks = 7, col = rgb(0, 0, 1, 0.5), main = "Length Distributi
 xlab = "Length", add = TRUE, border = "white") # add histogram to the histgram generated before.
 legend("topright", legend = c("Jedi", "Sith"), fill = c(rgb(1, 0, 0, 0.5), rgb(0, 0, 1, 0.5))) # add caption.
 ```
+
 ggplot and geom_histogram (ggplot2)
+
 ```{r}
 ggplot(df, aes(x = length, fill = species)) +
 geom_histogram(alpha = 0.5, position = "identity", bins = 20) +
@@ -116,14 +146,18 @@ geom_histogram(alpha = 0.5, position = "identity", bins = 10) +
 labs(title = "Length Distribution by Species", x = "Length", y = "Count") +
 theme_minimal() # bins=10. Looks smoother than bins=20.
 ```
+
 ##### b. Do the same comparison as in a. but with boxplots. If you want to use the ggplot2-package, use the functions ‘ggplot’ and ‘geom_boxplot’
+
 ```{r}
 ggplot(df, aes(x = species, y = length, fill = species)) +
 geom_boxplot() +
 labs(title = "Boxplot of Length by Species", x = "Species", y = "Length") +
 theme_minimal()
 ```
+
 ##### c. Save the plots with the ‘png’, ‘pdf’, and ‘svg’ formats. In which situation would you use which file format?
+
 ```{r}
 # ggsave function saves the most recently created plot, so I first ran ggplot and then saved the plots.
 ggplot(df, aes(x = length, fill = species)) +
@@ -158,13 +192,17 @@ data <- data.frame(
 )
 kable(data, format = "markdown", caption = "Comparison of File Formats for ggplot2")
 ```
+
 #### 2. Load the gene expression data matrix from the ‘microarray_data.tab’ dataset provided in the shared folder, it is a big tabular separated matrix.
 ##### a. How big is the matrix in terms of rows and columns?
+
 ```{r}
 microarray <- read.table("microarray_data.tab", header = TRUE, sep = "\t") # There's no row name in column 1, so read the file without using row.names=1.
 dim(microarray) # (row number, column number)
 ```
+
 ##### b. Count the missing values per gene and visualize this result.
+
 ```{r}
 library(pheatmap) # Maybe don't need to load this package. is.na() is a standard function of R.
 missing_values <- rowSums(is.na(microarray)) # Count missing values.
@@ -176,7 +214,9 @@ missing_values_col <- colSums(is.na(microarray))
 hist(missing_values_col, breaks = 20, main = "Histogram of Missing Values per Gene",
 xlab = "Number of Missing Values", col = "blue")
 ```
+
 ##### c. Find the genes for which there are more than X% (X=10%, 20%, 50%) missing values.
+
 ```{r}
 total_samples <- ncol(microarray)
 print(total_samples)
@@ -203,7 +243,9 @@ print(genes_10_row)
 print(genes_20_row)
 print(genes_50_row)
 ```
+
 ##### d. Replace the missing values by the average expression value for the particular gene. (Note: Imputing data has to be used with caution!)
+
 ```{r}
 microarray_filled <- microarray
 for (i in 1:nrow(microarray_filled)) {
@@ -217,8 +259,11 @@ microarray_filled <- t(apply(microarray_filled, 1, function(x) {
   return(x)
 }))
 ```
+
 I'm not sure if i succeeded in this.
+
 #### 3. Visualize the data in the CO2 dataset in a way that gives you a deeper understanding of the data. What do you see?
+
 ```{r}
 # distribution of CO2 uptake by plant type (quebec or mississippi)
 ggplot(CO2, aes(x = Type, y = uptake, fill = Type)) +
@@ -226,7 +271,9 @@ geom_boxplot() +
 labs(title = "CO2 Uptake by Type", x = "Plant Type", y = "CO2 Uptake") +
 theme_minimal()
 ```
+
 Quebec has higher CO2 uptake.
+
 ```{r}
 # distribution of CO2 uptake by treatment (chilled or nonchilled)
 ggplot(CO2, aes(x = Treatment, y = uptake, fill = Treatment)) +
@@ -234,7 +281,9 @@ geom_boxplot() +
 labs(title = "CO2 Uptake by Treatment", x = "Treatment", y = "CO2 Uptake") +
 theme_minimal()
 ```
+
 Nonchilled group has higher CO2 uptake.
+
 ```{r}
 # scatter plot of CO2 uptake and CO2 concentration. Chilled and nonchilled.
 ggplot(CO2, aes(x = conc, y = uptake, color = Type)) +
@@ -243,7 +292,9 @@ facet_wrap(~Treatment) +
 labs(title = "CO2 Uptake vs. Concentration", x = "CO2 Concentration", y = "CO2 Uptake") +
 theme_minimal()
 ```
+
 Regardless of chilled/nonchilled and quebec/mississippi, Co2 uptake increases by ambient CO2 concentration. However, the difference of co2 uptake ability between quebec and mississippi broadens in chilled condition. Mississipi plants tend to be less tolerant to cold stimulus.
+
 ```{r}
 # CO2 uptake by each plant
 ggplot(CO2, aes(x = Plant, y = uptake, fill = Plant)) +
@@ -254,6 +305,7 @@ ggplot(CO2, aes(x = Plant, y = uptake, fill = Plant)) +
 
 ### Task8
 #### 1. Install the Tidybiology package, which includes the data ‘chromosome’ and ‘proteins’
+
 ```{r}
 # I didn't have devtools, so I installed using install.packages("devtools")
 library(devtools)
@@ -264,7 +316,9 @@ library(tidybiology)
 data(chromosome)
 data(proteins)
 ```
+
 ##### a. Extract summary statistics (mean, median and maximum) for the following variables from the ‘chromosome’ data: variations, protein coding genes, and miRNAs. Utilize the tidyverse functions to make this as simply as possible.
+
 ```{r}
 head(chromosome)
 str(chromosome)
@@ -276,7 +330,9 @@ chromosome %>%
     max_variations = max(variations, na.rm = TRUE)
   )
 ```
+
 ##### b. How does the chromosome size distribute? Plot a graph that helps to visualize this by using ggplot2 package functions.
+
 ```{r}
 # show by chromosome DNA basepairs
 ggplot(chromosome, aes(x = basepairs)) +
@@ -290,7 +346,9 @@ geom_histogram(bins = 30, fill = "blue", alpha = 0.5) +
 labs(title = "Chromosome Size Distribution", x = "Size", y = "Count") +
 theme_minimal()
 ```
+
 ##### c. Does the number of protein coding genes or miRNAs correlate with the length of the chromosome? Make two separate plots to visualize these relationships.
+
 ```{r}
 # by basepairs
 ggplot(chromosome, aes(x = basepairs, y = protein_codinggenes)) +
@@ -304,7 +362,9 @@ geom_point() +
 geom_smooth(method = "lm") +
 labs(title = "Protein Coding Genes vs Chromosome Physical Size", x = "Chromosome Physical Size", y = "Protein Coding Genes")
 ```
+
 ##### d. Calculate the same summary statistics for the ‘proteins’ data variables length and mass. Create a meaningful visualization of the relationship between these two variables by utilizing the ggplot2 package functions. Play with the colors, theme- and other visualization parameters to create a plot that pleases you.
+
 ```{r}
 # check structure
 head(proteins)
