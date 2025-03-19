@@ -176,6 +176,7 @@ ggsave("boxplot.png")
 ggsave("boxplot.pdf")
 ggsave("boxplot.svg")
 ```
+
 ```{r echo=FALSE, results='asis'}
 library(knitr)
 data <- data.frame(
@@ -258,6 +259,8 @@ microarray_filled <- t(apply(microarray_filled, 1, function(x) {
   x[is.na(x)] <- mean(x, na.rm = TRUE)
   return(x)
 }))
+# t() means transposition of a matrix. MARGIN of apply() is 1, so this function(x) is applied to rows.
+dim(microarray_filled)
 ```
 
 I'm not sure if i succeeded in this.
@@ -329,6 +332,8 @@ chromosome %>%
     median_variations = median(variations, na.rm = TRUE),
     max_variations = max(variations, na.rm = TRUE)
   )
+# %>% is a pipe in magrittr package in tidyverse. 
+# summarise() is a function of dplyr package in tidyverse.
 ```
 
 ##### b. How does the chromosome size distribute? Plot a graph that helps to visualize this by using ggplot2 package functions.
@@ -349,6 +354,8 @@ theme_minimal()
 
 ##### c. Does the number of protein coding genes or miRNAs correlate with the length of the chromosome? Make two separate plots to visualize these relationships.
 
+**protein coding genes vs length of the chromosome**
+
 ```{r}
 # by basepairs
 ggplot(chromosome, aes(x = basepairs, y = protein_codinggenes)) +
@@ -362,6 +369,23 @@ geom_point() +
 geom_smooth(method = "lm") +
 labs(title = "Protein Coding Genes vs Chromosome Physical Size", x = "Chromosome Physical Size", y = "Protein Coding Genes")
 ```
+
+**miRNA vs length of the chromosome**
+
+```{r}
+# by basepairs
+ggplot(chromosome, aes(x = basepairs, y = mi_rna)) +
+geom_point() +
+geom_smooth(method = "lm") +
+labs(title = "miRNA vs Chromosome Basepairs", x = "Chromosome Basepairs", y = "miRNA")
+
+# by physical length
+ggplot(chromosome, aes(x = length_mm, y = mi_rna)) +
+geom_point() +
+geom_smooth(method = "lm") +
+labs(title = "miRNA vs Chromosome Physical Size", x = "Chromosome Physical Size", y = "miRNA")
+```
+
 
 ##### d. Calculate the same summary statistics for the ‘proteins’ data variables length and mass. Create a meaningful visualization of the relationship between these two variables by utilizing the ggplot2 package functions. Play with the colors, theme- and other visualization parameters to create a plot that pleases you.
 
