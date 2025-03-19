@@ -2,6 +2,7 @@
 repository for KI-UT joint bioinfo course
 
 ## Contents
-- **assignment1.pdf (most useful to see)** -> PDF file knitted from R markdown for assingment 1 (week1)
-- assignment1.html -> HTML file knitted from R markdown for assingment 1 (week1)
-- assignment1.Rmd -> original R markdown file for assignment 1
+### Week1 (assignment 1)
+- assignment1.pdf -> PDF file knitted from R markdown
+- [assignment1.html](https://junichiro-ui.github.io/ki-ut-course/assignment1.html) -> HTML file knitted from R markdown
+- assignment1.Rmd -> original R markdown file
