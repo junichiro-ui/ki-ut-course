@@ -1,0 +1,1656 @@
+---
+title: "exam"
+author: "junichiro-ui"
+date: "2025-03-21"
+output: html_document
+---
+
+# R markdown for exam
+This is the recording of R scripts. 
+```{r}
+setwd("~/Google Drive/My Drive/0_Iden2/KI-UT_doctoral_course/Data")
+exp <- read.table("ExpressionTable.txt", header=TRUE, sep="\t", row.names = 1)
+str(exp)
+exp_norm <- apply(exp, 2, function(x) x/sum(x)*1000000)
+head(exp_norm)
+write.table(exp_norm, file = "ExpressionTable_norm.tsv", sep="\t", quote = FALSE)
+```
+column is not right, so i adjusted and added "TC" to column1,row1 manually.
+
+
+To make PCA, merge cohort "newcond3" column.
+```{r}
+# === Step 1: データ読み込み ===
+# Expression matrix: 正しく row.names に"TC"列を指定
+exp_norm <- read.table("ExpressionTable_norm.tsv", sep="\t", header=TRUE, row.names=1, check.names=FALSE, stringsAsFactors=FALSE)
+
+# Cohort: Cond → newcond3 の対応表
+cohort <- read.delim("Cohort.txt", header=TRUE, stringsAsFactors=FALSE)
+
+# === Step 2: 置換用マッピングを作成 ===
+label_map <- setNames(cohort$newcond3, cohort$Cond)
+
+# === Step 3: 置換処理 ===
+# 元の列名を取得（例：NG1f0, NG1h0, ...）
+old_colnames <- colnames(exp_norm)
+
+# 対応するものがあれば newcond3 に置換、なければそのまま
+new_colnames <- ifelse(old_colnames %in% names(label_map), label_map[old_colnames], old_colnames)
+
+# 列名を更新
+colnames(exp_norm) <- new_colnames
+
+# === Step 4: 正しく出力 ===
+write.table(exp_norm, file="ExpressionTable_norm_renamed.tsv", sep="\t", quote=FALSE, row.names=TRUE, col.names=NA)
+```
+
+
+
+Do PCA analysis.
+```{r}
+# === ライブラリ読み込み ===
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# === データ読み込み ===
+exp <- read.table("ExpressionTable_norm_renamed.tsv", sep = "\t", header = TRUE, row.names = 1, check.names = FALSE)
+
+# === PCA準備 ===
+exp_t <- t(exp)
+pca <- prcomp(exp_t, scale. = TRUE)
+
+# === PCA結果データフレーム ===
+pca_df <- as.data.frame(pca$x)
+pca_df$Sample <- rownames(pca_df)
+
+# === グループとタイプ（f/h）を抽出 ===
+pca_df$Group <- sub("^(NO|OB|POB).*", "\\1", pca_df$Sample)
+pca_df$Type <- ifelse(grepl("f", pca_df$Sample), "f",
+                      ifelse(grepl("h", pca_df$Sample), "h", "other"))
+
+# === 透明度の設定 ===
+pca_df$Alpha <- ifelse(pca_df$Type == "f", 0.3,
+                       ifelse(pca_df$Type == "h", 0.8, 1.0))
+
+# === 色マップ設定 ===
+color_map <- c("NO" = "dodgerblue", "OB" = "orange", "POB" = "forestgreen")
+centroid_fill_map <- c("NO.f" = "dodgerblue", "NO.h" = "dodgerblue",
+                       "OB.f" = "orange",    "OB.h" = "orange",
+                       "POB.f" = "forestgreen", "POB.h" = "forestgreen")
+
+# === f/hの重心を計算 ===
+centroids <- pca_df %>%
+  filter(Type %in% c("f", "h")) %>%
+  group_by(Group, Type) %>%
+  summarise(PC1 = mean(PC1), PC2 = mean(PC2), .groups = "drop") %>%
+  mutate(ID = paste(Group, Type, sep = "."),
+         Alpha = ifelse(Type == "f", 0.3, 0.8))
+
+# === 矢印用データ：f と h の重心を結ぶペア ===
+arrow_data <- centroids %>%
+  select(Group, Type, PC1, PC2) %>%
+  pivot_wider(names_from = Type, values_from = c(PC1, PC2)) %>%
+  filter(!is.na(PC1_f) & !is.na(PC1_h)) %>%
+  mutate(x_start = PC1_f, y_start = PC2_f,
+         x_end = PC1_h, y_end = PC2_h)
+
+# === プロット ===
+p <- ggplot(pca_df, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = Group, alpha = Alpha), size = 3) +
+  scale_color_manual(values = color_map) +
+  scale_alpha_identity() +
+  # 四角い重心ポイント（f: 透明度低く, h: 高く）
+  geom_point(data = centroids,
+             aes(x = PC1, y = PC2, fill = ID, alpha = Alpha),
+             shape = 22, size = 5, color = "black", stroke = 1.2, show.legend = FALSE) +
+  scale_fill_manual(values = centroid_fill_map) +
+  # 矢印追加
+  geom_segment(data = arrow_data,
+               aes(x = x_start, y = y_start, xend = x_end, yend = y_end),
+               arrow = arrow(length = unit(0.25, "cm")),
+               color = "black", size = 1) +
+  # 軸・タイトルなど
+  theme_minimal(base_size = 14) +
+  labs(title = "PCA with Group Centroids and Arrows",
+       x = paste0("PC1 (", round(summary(pca)$importance[2,1]*100, 1), "%)"),
+       y = paste0("PC2 (", round(summary(pca)$importance[2,2]*100, 1), "%)")) +
+  theme(legend.position = "right")
+
+# === 描画 ===
+print(p)
+```
+
+
+Prepare for the edgeR differential expression analysis.
+Replace with sample name.
+
+```{r}
+# === Step 1: データ読み込み ===
+# Expression matrix: 正しく row.names に"TC"列を指定
+exp <- read.table("ExpressionTable.txt", sep="\t", header=TRUE, row.names=1, check.names=FALSE, stringsAsFactors=FALSE)
+
+# Cohort: Cond → newcond3 の対応表
+cohort <- read.delim("Cohort.txt", header=TRUE, stringsAsFactors=FALSE)
+
+# === Step 2: 置換用マッピングを作成 ===
+label_map <- setNames(cohort$newcond3, cohort$Cond)
+
+# === Step 3: 置換処理 ===
+# 元の列名を取得（例：NG1f0, NG1h0, ...）
+old_colnames <- colnames(exp)
+
+# 対応するものがあれば newcond3 に置換、なければそのまま
+new_colnames <- ifelse(old_colnames %in% names(label_map), label_map[old_colnames], old_colnames)
+
+# 列名を更新
+colnames(exp) <- new_colnames
+
+# === Step 4: 正しく出力 ===
+write.table(exp, file="ExpressionTable_renamed.tsv", sep="\t", quote=FALSE, row.names=TRUE, col.names=NA)
+```
+
+edgeR
+
+```{r}
+library(edgeR)
+library(dplyr)
+
+counts <- read.table("ExpressionTable.txt", sep="\t", header=TRUE, row.names=1, check.names=FALSE, stringsAsFactors=FALSE)
+cohort <- read.table("Cohort.txt", header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+run_edgeR_comparison <- function(group_label, cohort, counts) {
+  # サンプル選定
+  samples <- cohort %>% filter(newcond3 %in% c(paste0(group_label, ".f"), paste0(group_label, ".h")))
+  
+  group <- factor(samples$newcond3, levels = c(paste0(group_label, ".f"), paste0(group_label, ".h")))
+  colnames(counts) <- make.names(colnames(counts))  # Rの安全な名前に変換
+  selected_counts <- counts[, make.names(samples$Cond)]
+
+  # DGEListを作成
+  dge <- DGEList(counts = selected_counts, group = group)
+  keep <- filterByExpr(dge)
+  dge <- dge[keep, , keep.lib.sizes = FALSE]
+  dge <- calcNormFactors(dge)
+
+  # モデル作成と検定
+  design <- model.matrix(~group)
+  dge <- estimateDisp(dge, design)
+  fit <- glmQLFit(dge, design)
+  qlf <- glmQLFTest(fit, coef = 2)
+
+  # 結果出力
+  result <- topTags(qlf, n = Inf)$table
+  result$FDR <- p.adjust(result$PValue, method = "BH")
+  result <- result[order(result$FDR), ]
+  return(result)
+}
+
+
+# NO (Normal) 比較
+res_NO <- run_edgeR_comparison("NO", cohort, counts)
+
+# OB (Obese) 比較
+res_OB <- run_edgeR_comparison("OB", cohort, counts)
+
+# POB (Pre-Obese) 比較
+res_POB <- run_edgeR_comparison("POB", cohort, counts)
+
+# 保存
+write.csv(res_NO, "edgeR_NO_h_vs_f.csv")
+write.csv(res_OB, "edgeR_OB_h_vs_f.csv")
+write.csv(res_POB, "edgeR_POB_h_vs_f.csv")
+
+```
+
+
+volcano plot
+```{r}
+library(ggplot2)
+
+plot_volcano <- function(res, title = "Volcano Plot", logFC_threshold = 1, FDR_threshold = 0.05) {
+  res$gene <- rownames(res)
+  res$Significant <- with(res, ifelse(FDR < FDR_threshold & abs(logFC) >= logFC_threshold,
+                                      ifelse(logFC > 0, "Up", "Down"),
+                                      "Not Significant"))
+  
+  ggplot(res, aes(x = logFC, y = -log10(FDR), color = Significant)) +
+    geom_point(alpha = 0.7) +
+    scale_color_manual(values = c("Up" = "red", "Down" = "blue", "Not Significant" = "grey")) +
+    theme_minimal() +
+    labs(title = title,
+         x = "log2 Fold Change",
+         y = "-log10 FDR") +
+    geom_vline(xintercept = c(-logFC_threshold, logFC_threshold), linetype = "dashed", color = "black") +
+    geom_hline(yintercept = -log10(FDR_threshold), linetype = "dashed", color = "black")
+}
+
+# NO群のvolcano plot
+plot_volcano(res_NO, title = "NO.h vs NO.f")
+
+# OB群
+plot_volcano(res_OB, title = "OB.h vs OB.f")
+
+# POB群
+plot_volcano(res_POB, title = "POB.h vs POB.f")
+
+```
+
+
+
+edgeR using design matrix (better way than comparing h vs f for each)
+```{r}
+library(edgeR)
+library(dplyr)
+
+# データ読み込み
+counts <- read.table("ExpressionTable.txt", sep="\t", header=TRUE, row.names=1, check.names=FALSE, stringsAsFactors=FALSE)
+cohort <- read.table("Cohort.txt", header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+# 一致するサンプルのみ抽出
+common_samples <- intersect(colnames(counts), cohort$Cond)
+counts <- counts[, common_samples]
+cohort <- cohort[cohort$Cond %in% common_samples, ]
+
+# group（NO.f, NO.h, OB.f, OB.h, POB.f, POB.h など）を因子として定義
+group <- factor(cohort$newcond3)
+
+# デザインマトリクスの作成
+design <- model.matrix(~ 0 + group)  # インターセプトなしで各群を列に
+colnames(design) <- levels(group)   # 列名を分かりやすく
+
+dge <- DGEList(counts = counts, group = group)
+
+keep <- filterByExpr(dge, design)
+dge <- dge[keep, , keep.lib.sizes = FALSE]
+dge <- calcNormFactors(dge)
+
+dge <- estimateDisp(dge, design)
+fit <- glmQLFit(dge, design)
+
+# 比較したいペア（h vs f）
+contrast_NO  <- makeContrasts(NO.h - NO.f, levels = design)
+contrast_OB  <- makeContrasts(OB.h - OB.f, levels = design)
+contrast_POB <- makeContrasts(POB.h - POB.f, levels = design)
+
+
+qlf_NO  <- glmQLFTest(fit, contrast = contrast_NO)
+qlf_OB  <- glmQLFTest(fit, contrast = contrast_OB)
+qlf_POB <- glmQLFTest(fit, contrast = contrast_POB)
+
+# 結果取得
+res_NO  <- topTags(qlf_NO, n = Inf)$table
+res_OB  <- topTags(qlf_OB, n = Inf)$table
+res_POB <- topTags(qlf_POB, n = Inf)$table
+
+# 保存
+write.csv(res_NO, "edgeR_NO_h_vs_f_2.csv")
+write.csv(res_OB, "edgeR_OB_h_vs_f_2.csv")
+write.csv(res_POB, "edgeR_POB_h_vs_f_2.csv")
+
+# plot_volcano function that i defined earlier
+plot_volcano(res_NO, title = "NO.h vs NO.f")
+plot_volcano(res_OB, title = "OB.h vs OB.f")
+plot_volcano(res_POB, title = "POB.h vs POB.f")
+
+```
+
+
+PCA against DEG only
+prep for PCA
+```{r}
+# 正規化済みの発現データ
+norm_expr <- read.table("ExpressionTable_norm_renamed.tsv", sep="\t", header=TRUE, row.names=1, check.names=FALSE)
+
+# DEG結果（例: res_NO）
+deg_res <- read.csv("edgeR_NO_h_vs_f.csv", row.names = 1)
+deg_genes <- rownames(deg_res[deg_res$FDR < 0.05, ])
+deg_expr <- norm_expr[rownames(norm_expr) %in% deg_genes, ]
+write.table(deg_expr, "ExpressionTable_norm_renamed_DEG_NO.tsv", sep="\t", quote=FALSE, col.names=NA)
+
+deg_res <- read.csv("edgeR_OB_h_vs_f.csv", row.names = 1)
+deg_genes <- rownames(deg_res[deg_res$FDR < 0.05, ])
+deg_expr <- norm_expr[rownames(norm_expr) %in% deg_genes, ]
+write.table(deg_expr, "ExpressionTable_norm_renamed_DEG_OB.tsv", sep="\t", quote=FALSE, col.names=NA)
+
+deg_res <- read.csv("edgeR_POB_h_vs_f.csv", row.names = 1)
+deg_genes <- rownames(deg_res[deg_res$FDR < 0.05, ])
+deg_expr <- norm_expr[rownames(norm_expr) %in% deg_genes, ]
+write.table(deg_expr, "ExpressionTable_norm_renamed_DEG_POB.tsv", sep="\t", quote=FALSE, col.names=NA)
+
+# 全てのDEG
+deg_NO  <- rownames(res_NO[res_NO$FDR < 0.05, ])
+deg_OB  <- rownames(res_OB[res_OB$FDR < 0.05, ])
+deg_POB <- rownames(res_POB[res_POB$FDR < 0.05, ])
+# 全てのDEGを結合してユニークに（重複を除く）
+deg_all <- unique(c(deg_NO, deg_OB, deg_POB))
+deg_expr <- norm_expr[rownames(norm_expr) %in% deg_all, ]
+write.table(deg_expr, "ExpressionTable_norm_renamed_DEG.tsv", sep="\t", quote=FALSE, col.names=NA)
+
+
+```
+
+PCA using the function i defined earlier
+NO
+```{r}
+# === ライブラリ読み込み ===
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# === データ読み込み ===
+exp <- read.table("ExpressionTable_norm_renamed_DEG_NO.tsv", sep = "\t", header = TRUE, row.names = 1, check.names = FALSE)
+
+# === PCA準備 ===
+exp_t <- t(exp)
+pca <- prcomp(exp_t, scale. = TRUE)
+
+# === PCA結果データフレーム ===
+pca_df <- as.data.frame(pca$x)
+pca_df$Sample <- rownames(pca_df)
+
+# === グループとタイプ（f/h）を抽出 ===
+pca_df$Group <- sub("^(NO|OB|POB).*", "\\1", pca_df$Sample)
+pca_df$Type <- ifelse(grepl("f", pca_df$Sample), "f",
+                      ifelse(grepl("h", pca_df$Sample), "h", "other"))
+
+# === 透明度の設定 ===
+pca_df$Alpha <- ifelse(pca_df$Type == "f", 0.3,
+                       ifelse(pca_df$Type == "h", 0.8, 1.0))
+
+# === 色マップ設定 ===
+color_map <- c("NO" = "dodgerblue", "OB" = "orange", "POB" = "forestgreen")
+centroid_fill_map <- c("NO.f" = "dodgerblue", "NO.h" = "dodgerblue",
+                       "OB.f" = "orange",    "OB.h" = "orange",
+                       "POB.f" = "forestgreen", "POB.h" = "forestgreen")
+
+# === f/hの重心を計算 ===
+centroids <- pca_df %>%
+  filter(Type %in% c("f", "h")) %>%
+  group_by(Group, Type) %>%
+  summarise(PC1 = mean(PC1), PC2 = mean(PC2), .groups = "drop") %>%
+  mutate(ID = paste(Group, Type, sep = "."),
+         Alpha = ifelse(Type == "f", 0.3, 0.8))
+
+# === 矢印用データ：f と h の重心を結ぶペア ===
+arrow_data <- centroids %>%
+  select(Group, Type, PC1, PC2) %>%
+  pivot_wider(names_from = Type, values_from = c(PC1, PC2)) %>%
+  filter(!is.na(PC1_f) & !is.na(PC1_h)) %>%
+  mutate(x_start = PC1_f, y_start = PC2_f,
+         x_end = PC1_h, y_end = PC2_h)
+
+# === プロット ===
+p <- ggplot(pca_df, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = Group, alpha = Alpha), size = 3) +
+  scale_color_manual(values = color_map) +
+  scale_alpha_identity() +
+  # 四角い重心ポイント（f: 透明度低く, h: 高く）
+  geom_point(data = centroids,
+             aes(x = PC1, y = PC2, fill = ID, alpha = Alpha),
+             shape = 22, size = 5, color = "black", stroke = 1.2, show.legend = FALSE) +
+  scale_fill_manual(values = centroid_fill_map) +
+  # 矢印追加
+  geom_segment(data = arrow_data,
+               aes(x = x_start, y = y_start, xend = x_end, yend = y_end),
+               arrow = arrow(length = unit(0.25, "cm")),
+               color = "black", size = 1) +
+  # 軸・タイトルなど
+  theme_minimal(base_size = 14) +
+  labs(title = "PCA with Group Centroids and Arrows",
+       x = paste0("PC1 (", round(summary(pca)$importance[2,1]*100, 1), "%)"),
+       y = paste0("PC2 (", round(summary(pca)$importance[2,2]*100, 1), "%)")) +
+  theme(legend.position = "right")
+
+# === 描画 ===
+print(p)
+
+```
+
+
+OB
+```{r}
+# === ライブラリ読み込み ===
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# === データ読み込み ===
+exp <- read.table("ExpressionTable_norm_renamed_DEG_OB.tsv", sep = "\t", header = TRUE, row.names = 1, check.names = FALSE)
+
+# === PCA準備 ===
+exp_t <- t(exp)
+pca <- prcomp(exp_t, scale. = TRUE)
+
+# === PCA結果データフレーム ===
+pca_df <- as.data.frame(pca$x)
+pca_df$Sample <- rownames(pca_df)
+
+# === グループとタイプ（f/h）を抽出 ===
+pca_df$Group <- sub("^(NO|OB|POB).*", "\\1", pca_df$Sample)
+pca_df$Type <- ifelse(grepl("f", pca_df$Sample), "f",
+                      ifelse(grepl("h", pca_df$Sample), "h", "other"))
+
+# === 透明度の設定 ===
+pca_df$Alpha <- ifelse(pca_df$Type == "f", 0.3,
+                       ifelse(pca_df$Type == "h", 0.8, 1.0))
+
+# === 色マップ設定 ===
+color_map <- c("NO" = "dodgerblue", "OB" = "orange", "POB" = "forestgreen")
+centroid_fill_map <- c("NO.f" = "dodgerblue", "NO.h" = "dodgerblue",
+                       "OB.f" = "orange",    "OB.h" = "orange",
+                       "POB.f" = "forestgreen", "POB.h" = "forestgreen")
+
+# === f/hの重心を計算 ===
+centroids <- pca_df %>%
+  filter(Type %in% c("f", "h")) %>%
+  group_by(Group, Type) %>%
+  summarise(PC1 = mean(PC1), PC2 = mean(PC2), .groups = "drop") %>%
+  mutate(ID = paste(Group, Type, sep = "."),
+         Alpha = ifelse(Type == "f", 0.3, 0.8))
+
+# === 矢印用データ：f と h の重心を結ぶペア ===
+arrow_data <- centroids %>%
+  select(Group, Type, PC1, PC2) %>%
+  pivot_wider(names_from = Type, values_from = c(PC1, PC2)) %>%
+  filter(!is.na(PC1_f) & !is.na(PC1_h)) %>%
+  mutate(x_start = PC1_f, y_start = PC2_f,
+         x_end = PC1_h, y_end = PC2_h)
+
+# === プロット ===
+p <- ggplot(pca_df, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = Group, alpha = Alpha), size = 3) +
+  scale_color_manual(values = color_map) +
+  scale_alpha_identity() +
+  # 四角い重心ポイント（f: 透明度低く, h: 高く）
+  geom_point(data = centroids,
+             aes(x = PC1, y = PC2, fill = ID, alpha = Alpha),
+             shape = 22, size = 5, color = "black", stroke = 1.2, show.legend = FALSE) +
+  scale_fill_manual(values = centroid_fill_map) +
+  # 矢印追加
+  geom_segment(data = arrow_data,
+               aes(x = x_start, y = y_start, xend = x_end, yend = y_end),
+               arrow = arrow(length = unit(0.25, "cm")),
+               color = "black", size = 1) +
+  # 軸・タイトルなど
+  theme_minimal(base_size = 14) +
+  labs(title = "PCA with Group Centroids and Arrows",
+       x = paste0("PC1 (", round(summary(pca)$importance[2,1]*100, 1), "%)"),
+       y = paste0("PC2 (", round(summary(pca)$importance[2,2]*100, 1), "%)")) +
+  theme(legend.position = "right")
+
+# === 描画 ===
+print(p)
+```
+
+POB
+```{r}
+# === ライブラリ読み込み ===
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# === データ読み込み ===
+exp <- read.table("ExpressionTable_norm_renamed_DEG_POB.tsv", sep = "\t", header = TRUE, row.names = 1, check.names = FALSE)
+
+# === PCA準備 ===
+exp_t <- t(exp)
+pca <- prcomp(exp_t, scale. = TRUE)
+
+# === PCA結果データフレーム ===
+pca_df <- as.data.frame(pca$x)
+pca_df$Sample <- rownames(pca_df)
+
+# === グループとタイプ（f/h）を抽出 ===
+pca_df$Group <- sub("^(NO|OB|POB).*", "\\1", pca_df$Sample)
+pca_df$Type <- ifelse(grepl("f", pca_df$Sample), "f",
+                      ifelse(grepl("h", pca_df$Sample), "h", "other"))
+
+# === 透明度の設定 ===
+pca_df$Alpha <- ifelse(pca_df$Type == "f", 0.3,
+                       ifelse(pca_df$Type == "h", 0.8, 1.0))
+
+# === 色マップ設定 ===
+color_map <- c("NO" = "dodgerblue", "OB" = "orange", "POB" = "forestgreen")
+centroid_fill_map <- c("NO.f" = "dodgerblue", "NO.h" = "dodgerblue",
+                       "OB.f" = "orange",    "OB.h" = "orange",
+                       "POB.f" = "forestgreen", "POB.h" = "forestgreen")
+
+# === f/hの重心を計算 ===
+centroids <- pca_df %>%
+  filter(Type %in% c("f", "h")) %>%
+  group_by(Group, Type) %>%
+  summarise(PC1 = mean(PC1), PC2 = mean(PC2), .groups = "drop") %>%
+  mutate(ID = paste(Group, Type, sep = "."),
+         Alpha = ifelse(Type == "f", 0.3, 0.8))
+
+# === 矢印用データ：f と h の重心を結ぶペア ===
+arrow_data <- centroids %>%
+  select(Group, Type, PC1, PC2) %>%
+  pivot_wider(names_from = Type, values_from = c(PC1, PC2)) %>%
+  filter(!is.na(PC1_f) & !is.na(PC1_h)) %>%
+  mutate(x_start = PC1_f, y_start = PC2_f,
+         x_end = PC1_h, y_end = PC2_h)
+
+# === プロット ===
+p <- ggplot(pca_df, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = Group, alpha = Alpha), size = 3) +
+  scale_color_manual(values = color_map) +
+  scale_alpha_identity() +
+  # 四角い重心ポイント（f: 透明度低く, h: 高く）
+  geom_point(data = centroids,
+             aes(x = PC1, y = PC2, fill = ID, alpha = Alpha),
+             shape = 22, size = 5, color = "black", stroke = 1.2, show.legend = FALSE) +
+  scale_fill_manual(values = centroid_fill_map) +
+  # 矢印追加
+  geom_segment(data = arrow_data,
+               aes(x = x_start, y = y_start, xend = x_end, yend = y_end),
+               arrow = arrow(length = unit(0.25, "cm")),
+               color = "black", size = 1) +
+  # 軸・タイトルなど
+  theme_minimal(base_size = 14) +
+  labs(title = "PCA with Group Centroids and Arrows",
+       x = paste0("PC1 (", round(summary(pca)$importance[2,1]*100, 1), "%)"),
+       y = paste0("PC2 (", round(summary(pca)$importance[2,2]*100, 1), "%)")) +
+  theme(legend.position = "right")
+
+# === 描画 ===
+print(p)
+```
+
+PCA using DEGs in at least one comparison
+```{r}
+# === ライブラリ読み込み ===
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# === データ読み込み ===
+exp <- read.table("ExpressionTable_norm_renamed_DEG.tsv", sep = "\t", header = TRUE, row.names = 1, check.names = FALSE)
+
+# === PCA準備 ===
+exp_t <- t(exp)
+pca <- prcomp(exp_t, scale. = TRUE)
+
+# === PCA結果データフレーム ===
+pca_df <- as.data.frame(pca$x)
+pca_df$Sample <- rownames(pca_df)
+
+# === グループとタイプ（f/h）を抽出 ===
+pca_df$Group <- sub("^(NO|OB|POB).*", "\\1", pca_df$Sample)
+pca_df$Type <- ifelse(grepl("f", pca_df$Sample), "f",
+                      ifelse(grepl("h", pca_df$Sample), "h", "other"))
+
+# === 透明度の設定 ===
+pca_df$Alpha <- ifelse(pca_df$Type == "f", 0.3,
+                       ifelse(pca_df$Type == "h", 0.8, 1.0))
+
+# === 色マップ設定 ===
+color_map <- c("NO" = "dodgerblue", "OB" = "orange", "POB" = "forestgreen")
+centroid_fill_map <- c("NO.f" = "dodgerblue", "NO.h" = "dodgerblue",
+                       "OB.f" = "orange",    "OB.h" = "orange",
+                       "POB.f" = "forestgreen", "POB.h" = "forestgreen")
+
+# === f/hの重心を計算 ===
+centroids <- pca_df %>%
+  filter(Type %in% c("f", "h")) %>%
+  group_by(Group, Type) %>%
+  summarise(PC1 = mean(PC1), PC2 = mean(PC2), .groups = "drop") %>%
+  mutate(ID = paste(Group, Type, sep = "."),
+         Alpha = ifelse(Type == "f", 0.3, 0.8))
+
+# === 矢印用データ：f と h の重心を結ぶペア ===
+arrow_data <- centroids %>%
+  select(Group, Type, PC1, PC2) %>%
+  pivot_wider(names_from = Type, values_from = c(PC1, PC2)) %>%
+  filter(!is.na(PC1_f) & !is.na(PC1_h)) %>%
+  mutate(x_start = PC1_f, y_start = PC2_f,
+         x_end = PC1_h, y_end = PC2_h)
+
+# === プロット ===
+p <- ggplot(pca_df, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = Group, alpha = Alpha), size = 3) +
+  scale_color_manual(values = color_map) +
+  scale_alpha_identity() +
+  # 四角い重心ポイント（f: 透明度低く, h: 高く）
+  geom_point(data = centroids,
+             aes(x = PC1, y = PC2, fill = ID, alpha = Alpha),
+             shape = 22, size = 5, color = "black", stroke = 1.2, show.legend = FALSE) +
+  scale_fill_manual(values = centroid_fill_map) +
+  # 矢印追加
+  geom_segment(data = arrow_data,
+               aes(x = x_start, y = y_start, xend = x_end, yend = y_end),
+               arrow = arrow(length = unit(0.25, "cm")),
+               color = "black", size = 1) +
+  # 軸・タイトルなど
+  theme_minimal(base_size = 14) +
+  labs(title = "PCA with Group Centroids and Arrows",
+       x = paste0("PC1 (", round(summary(pca)$importance[2,1]*100, 1), "%)"),
+       y = paste0("PC2 (", round(summary(pca)$importance[2,2]*100, 1), "%)")) +
+  theme(legend.position = "right")
+
+# === 描画 ===
+print(p)
+
+
+```
+
+
+PCA for Denmark or KI (check for batch effect)
+```{r}
+# 発現データの読み込み
+expr <- read.table("ExpressionTable_norm.tsv", sep = "\t", header = TRUE, row.names = 1, check.names = FALSE)
+
+# 臨床情報の読み込み
+clinical <- read.table("clinical_data.txt", sep = "\t", header = TRUE, stringsAsFactors = FALSE)
+
+# 元の列名を取得
+original_colnames <- colnames(expr)
+
+# ベース名（末尾のf0, h0, f2, h2などを除く）を抽出
+# 正規表現で末尾のf0, h0, f2, h2 を除去
+base_names <- gsub("f[0-9]$|h[0-9]$", "", original_colnames)
+
+# 新しい列名を生成
+new_colnames <- mapply(function(orig, base) {
+  where <- clinical$Where[clinical$ID == base]
+  if (length(where) == 1) {
+    paste0(orig, "_", where)
+  } else {
+    orig  # 対応が見つからない場合はそのまま
+  }
+}, orig = original_colnames, base = base_names)
+
+# 列名を置き換え
+colnames(expr) <- new_colnames
+
+# 保存
+write.table(expr, "ExpressionTable_norm_place.tsv", sep = "\t", quote = FALSE, col.names = NA)
+
+
+```
+-> There are so many samples missing in the clinical_data.txt, so i gave up.
+
+
+Merge to genes at last.(didn't need to do this)
+```{r}
+exp_norm <- read.table("ExpressionTable_norm.tsv", sep="\t", header=TRUE, stringsAsFactors=FALSE) # don't use row.names=1 because i will use the first column to merge.
+annot <- read.table("Annotation.txt", header=TRUE, sep="\t", stringsAsFactors=FALSE)
+exp_norm_ids <- exp_norm[[1]]
+exp_norm$TC <- exp_norm_ids
+merged <- merge(annot[, c("TC", "gene")], exp_norm, by = "TC", all.y = TRUE)
+head(merged)
+merged_out <- merged[, c("gene", colnames(merged)[!(colnames(merged) %in% c("TC", "gene"))])] # gene column to the first column and remove TC column
+str(merged_out)
+head(merged_out)
+write.table(merged_out, file = "ExpressionTable_with_gene.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
+```{r}
+# 1. データの読み込み
+exp <- read.table("ExpressionTable.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+annot <- read.table("Annotation.txt", header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+# 2. 位置情報 -> 遺伝子名のベースマッピングを作成
+position_to_gene <- setNames(annot$gene, annot$TC)
+
+# 3. ExpressionTableの1列目（位置情報）を基に、gene名をマッピング
+original_positions <- exp$V1
+mapped_genes <- ifelse(original_positions %in% names(position_to_gene),
+                       position_to_gene[original_positions],
+                       original_positions)
+
+# 4. 同じgene名が複数回出現した場合に .1, .2, ... を付けてユニークにする
+make_unique <- function(x) {
+  ave(x, x, FUN = function(y) {
+    if (length(y) == 1) return(y)
+    paste0(y[1], ".", seq_along(y))
+  })
+}
+unique_genes <- make_unique(mapped_genes)
+
+# 5. ExpressionTableの1列目を置換
+exp$V1 <- unique_genes
+
+# 6. 対応表を作成（元の位置情報と新しいgene名の対応）
+mapping_table <- data.frame(Position = original_positions, GeneName = unique_genes, stringsAsFactors = FALSE)
+
+# 7. 出力
+write.table(exp, file = "ExpressionTable_annotated.txt", sep = "\t", quote = FALSE, row.names = FALSE, col.names = FALSE)
+write.table(mapping_table, file = "Position_to_Gene_mapping.txt", sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+```
+
+
+
+```{r}
+# 1. アノテーション済み発現データを読み込む
+exp_annot <- read.table("ExpressionTable_annotated.txt", header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+# 2. 最初の列（遺伝子名）と残りの数値部分に分ける
+gene_names_full <- exp_annot[, 1]
+expression_values <- exp_annot[, -1]
+expression_values <- apply(expression_values, 2, as.numeric)  # 数値に変換
+
+# 3. 接尾辞（.1, .2 など）を取り除いて、ベースの遺伝子名だけを使う
+gene_names_base <- sub("\\.\\d+$", "", gene_names_full)
+
+# 4. 同じベース名ごとに合計
+summarized <- aggregate(expression_values, by = list(Gene = gene_names_base), FUN = sum)
+
+# 5. 結果を保存
+write.table(summarized, file = "ExpressionTable_annotated_gene.txt", sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+```
+
+Differential expression analysis using edgeR
+```{r}
+library(edgeR)
+library(dplyr)
+
+# データ読み込み
+counts <- read.table("ExpressionTable_annotated_gene.txt", sep="\t", header=TRUE, row.names=1, check.names=FALSE, stringsAsFactors=FALSE)
+cohort <- read.table("Cohort.txt", header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+# 一致するサンプルのみ抽出
+common_samples <- intersect(colnames(counts), cohort$Cond)
+counts <- counts[, common_samples]
+cohort <- cohort[cohort$Cond %in% common_samples, ]
+
+# group（NO.f, NO.h, OB.f, OB.h, POB.f, POB.h など）を因子として定義
+group <- factor(cohort$newcond3)
+
+# デザインマトリクスの作成
+design <- model.matrix(~ 0 + group)  # インターセプトなしで各群を列に
+colnames(design) <- levels(group)   # 列名を分かりやすく
+
+dge <- DGEList(counts = counts, group = group)
+
+keep <- filterByExpr(dge, design)
+dge <- dge[keep, , keep.lib.sizes = FALSE]
+dge <- calcNormFactors(dge)
+
+dge <- estimateDisp(dge, design)
+fit <- glmQLFit(dge, design)
+
+# 比較したいペア（h vs f）
+contrast_NO  <- makeContrasts(NO.h - NO.f, levels = design)
+contrast_OB  <- makeContrasts(OB.h - OB.f, levels = design)
+contrast_POB <- makeContrasts(POB.h - POB.f, levels = design)
+
+
+qlf_NO  <- glmQLFTest(fit, contrast = contrast_NO)
+qlf_OB  <- glmQLFTest(fit, contrast = contrast_OB)
+qlf_POB <- glmQLFTest(fit, contrast = contrast_POB)
+
+# 結果取得
+res_NO  <- topTags(qlf_NO, n = Inf)$table
+res_OB  <- topTags(qlf_OB, n = Inf)$table
+res_POB <- topTags(qlf_POB, n = Inf)$table
+
+# 保存
+write.csv(res_NO, "edgeR_NO_h_vs_f_gene.csv")
+write.csv(res_OB, "edgeR_OB_h_vs_f_gene.csv")
+write.csv(res_POB, "edgeR_POB_h_vs_f_gene.csv")
+
+# plot_volcano function that i defined earlier
+plot_volcano(res_NO, title = "NO.h vs NO.f")
+plot_volcano(res_OB, title = "OB.h vs OB.f")
+plot_volcano(res_POB, title = "POB.h vs POB.f")
+```
+
+さらに遺伝子名をvolcano plotに入れる。
+
+```{r}
+library(ggplot2)
+library(ggrepel)
+
+plot_volcano2 <- function(res, 
+                         title = "Volcano Plot", 
+                         logFC_threshold = 1, 
+                         FDR_threshold = 0.05,
+                         label_logFC = 2,
+                         label_neglogFDR = 10) {
+  res$gene <- rownames(res)
+  
+  res$Significant <- with(res, ifelse(FDR < FDR_threshold & abs(logFC) >= logFC_threshold,
+                                      ifelse(logFC > 0, "Up", "Down"),
+                                      "Not Significant"))
+  
+  res$label <- with(res, ifelse(abs(logFC) > label_logFC & -log10(FDR) > label_neglogFDR, gene, NA))
+  
+  ggplot(res, aes(x = logFC, y = -log10(FDR), color = Significant)) +
+    geom_point(alpha = 0.7) +
+    scale_color_manual(values = c("Up" = "red", "Down" = "blue", "Not Significant" = "grey")) +
+    theme_minimal() +
+    labs(title = title,
+         x = "log2 Fold Change",
+         y = "-log10 FDR") +
+    geom_vline(xintercept = c(-logFC_threshold, logFC_threshold), linetype = "dashed", color = "black") +
+    geom_hline(yintercept = -log10(FDR_threshold), linetype = "dashed", color = "black") +
+    ggrepel::geom_text_repel(aes(label = label), max.overlaps = 20, segment.size = 0.2, min.segment.length = 0, size = 3)
+}
+
+plot_volcano2(res_NO, label_logFC = 1, label_neglogFDR = 10)
+plot_volcano2(res_OB, label_logFC = 1.5, label_neglogFDR = 5)
+plot_volcano2(res_POB, label_logFC = 2, label_neglogFDR = 10)
+```
+
+さらにfold changeで散布図を作る。
+```{r}
+
+library(tibble)
+# fold change だけ取り出し（行名を保持）
+fc_POB <- res_POB %>% rownames_to_column("Gene") %>% select(Gene, logFC)
+fc_NO <- res_NO %>% rownames_to_column("Gene") %>% select(Gene, logFC)
+
+# フォールドチェンジのテーブルをGeneでマージ
+fc_df_POBNO <- full_join(
+  fc_NO %>% rename(FC_NO = logFC),
+  fc_POB %>% rename(FC_POB = logFC),
+  by = "Gene"
+)
+
+
+# 距離と象限を計算してから、上位5つずつ抽出 & ラベル
+fc_df_POBNO_labeled <- fc_df_POBNO %>%
+  mutate(
+    quadrant = case_when(
+      FC_NO < 0 & FC_POB > 0 ~ "Q2",
+      FC_NO > 0 & FC_POB < 0 ~ "Q4",
+      TRUE ~ "other"
+    ),
+    distance = sqrt(FC_NO^2 + FC_POB^2)
+  )
+
+top_q2 <- fc_df_POBNO_labeled %>% filter(quadrant == "Q2") %>% slice_max(distance, n = 5)
+top_q4 <- fc_df_POBNO_labeled %>% filter(quadrant == "Q4") %>% slice_max(distance, n = 5)
+
+# 全体の散布図
+ggplot(fc_df_POBNO, aes(x = FC_NO, y = FC_POB)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+  geom_abline(slope = 1, intercept = 0, linetype = "solid", color = "blue") +
+  theme_minimal() +
+  labs(
+    title = "Fold Change: POB vs NO (h vs f)",
+    x = "log2(FC) NO.f vs NO.h",
+    y = "log2(FC) POB.f vs POB.h"
+  )
+
+# ラベル付き散布図
+ggplot(fc_df_POBNO_labeled, aes(x = FC_NO, y = FC_POB, color = quadrant)) +
+  geom_point(alpha = 0.6) +
+  geom_text_repel(data = top_q2, aes(label = Gene), size = 3, max.overlaps = Inf, color = "black") +
+  geom_text_repel(data = top_q4, aes(label = Gene), size = 3, max.overlaps = Inf, color = "black") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+  geom_abline(slope = 1, intercept = 0, linetype = "solid", color = "blue") +
+  scale_color_manual(values = c(Q2 = "orange", Q4 = "orange", other = "gray")) +
+  theme_minimal()
+
+```
+
+venn diagram of DEGs
+```{r}
+# 全てのDEG
+deg_NO  <- rownames(res_NO[res_NO$FDR < 0.05, ])
+deg_OB  <- rownames(res_OB[res_OB$FDR < 0.05, ])
+deg_POB <- rownames(res_POB[res_POB$FDR < 0.05, ])
+
+library(VennDiagram)
+
+# リスト化
+venn_list <- list(
+  NO  = deg_NO,
+  OB  = deg_OB,
+  POB = deg_POB
+)
+
+# ベン図をファイルに出力せずにプロット
+venn.plot <- venn.diagram(
+  x = venn_list,
+  filename = NULL,
+  col = "black",
+  fill = c("dodgerblue", "orange", "forestgreen"),
+  alpha = 0.5,
+  cex = 1.2,
+  cat.cex = 1.2,
+  cat.pos = 0
+)
+grid.newpage()
+grid.draw(venn.plot)
+```
+
+comparison of POB.f and NO.f, and POB.h and NO.h
+```{r}
+# 比較したいペア（h vs f）
+contrast_POBNOf  <- makeContrasts(POB.f - NO.f, levels = design)
+contrast_POBNOh  <- makeContrasts(POB.h - NO.h, levels = design)
+
+qlf_POBNOf  <- glmQLFTest(fit, contrast = contrast_POBNOf)
+qlf_POBNOh  <- glmQLFTest(fit, contrast = contrast_POBNOh)
+
+# 結果取得
+res_POBNOf  <- topTags(qlf_POBNOf, n = Inf)$table
+res_POBNOh  <- topTags(qlf_POBNOh, n = Inf)$table
+
+# 保存
+write.csv(res_POBNOf, "edgeR_POB_f_vs_NO_f_gene.csv")
+write.csv(res_POBNOh, "edgeR_POB_h_vs_NO_h_gene.csv")
+
+# plot_volcano function that i defined earlier
+plot_volcano2(res_POBNOf, label_logFC = 5, label_neglogFDR = 3, title = "POB.f vs NO.f")
+plot_volcano2(res_POBNOh, label_logFC = 5, label_neglogFDR = 3, title = "POB.h vs NO.h")
+
+
+# get fold change
+fc_f <- res_POBNOf %>% select(logFC)
+fc_h <- res_POBNOh %>% select(logFC)
+
+# 遺伝子名を共通キーにして結合
+fc_df <- full_join(
+  tibble(Gene = rownames(fc_f), FC_f = fc_f$logFC),
+  tibble(Gene = rownames(fc_h), FC_h = fc_h$logFC),
+  by = "Gene"
+)
+
+# 散布図を描画
+ggplot(fc_df, aes(x = FC_f, y = FC_h)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+  geom_abline(slope = 1, intercept = 0, linetype = "solid", color = "blue") +
+  theme_minimal() +
+  labs(
+    title = "Fold Change: h vs f (POB vs NO)",
+    x = "log2(FC) POB.f vs NO.f",
+    y = "log2(FC) POB.h vs NO.h"
+  )
+```
+
+```{r}
+library(tibble)
+# fold change だけ取り出し（行名を保持）
+fc_f <- res_POBNOf %>% rownames_to_column("Gene") %>% select(Gene, logFC)
+fc_h <- res_POBNOh %>% rownames_to_column("Gene") %>% select(Gene, logFC)
+
+# フォールドチェンジのテーブルをGeneでマージ
+fc_df <- full_join(
+  fc_f %>% rename(FC_f = logFC),
+  fc_h %>% rename(FC_h = logFC),
+  by = "Gene"
+)
+
+
+# 距離と象限を計算してから、上位5つずつ抽出 & ラベル
+fc_df_labeled <- fc_df %>%
+  mutate(
+    quadrant = case_when(
+      FC_f < 0 & FC_h > 0 ~ "Q2",
+      FC_f > 0 & FC_h < 0 ~ "Q4",
+      TRUE ~ "other"
+    ),
+    distance = sqrt(FC_f^2 + FC_h^2)
+  )
+
+top_q2 <- fc_df_labeled %>% filter(quadrant == "Q2") %>% slice_max(distance, n = 5)
+top_q4 <- fc_df_labeled %>% filter(quadrant == "Q4") %>% slice_max(distance, n = 5)
+
+# ラベル付き散布図
+ggplot(fc_df_labeled, aes(x = FC_f, y = FC_h, color = quadrant)) +
+  geom_point(alpha = 0.6) +
+  geom_text_repel(data = top_q2, aes(label = Gene), size = 3, max.overlaps = Inf, color = "black") +
+  geom_text_repel(data = top_q4, aes(label = Gene), size = 3, max.overlaps = Inf, color = "black") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+  geom_abline(slope = 1, intercept = 0, linetype = "solid", color = "blue") +
+  scale_color_manual(values = c(Q2 = "orange", Q4 = "orange", other = "gray")) +
+  coord_cartesian(xlim = c(-2.5, 2.5), ylim = c(-2.5, 2.5)) +
+  theme_minimal()
+
+```
+
+Box plot of representative genes
+```{r}
+library(ggplot2)
+library(dplyr)
+library(edgeR)
+library(ggsignif)
+
+# CPMに変換
+cpm_matrix <- cpm(dge, log = FALSE)
+
+# 遺伝子指定
+target_gene <- "PPP1R3B"
+tss_rows <- grep(paste0("^", target_gene), rownames(cpm_matrix), value = TRUE)
+expr_values <- colSums(cpm_matrix[tss_rows, , drop = FALSE])
+
+# データ整形
+plot_df <- data.frame(Sample = names(expr_values), Expression = expr_values)
+plot_df <- left_join(plot_df, cohort, by = c("Sample" = "Cond"))
+
+# 条件情報を加工
+plot_df <- plot_df %>%
+  mutate(
+    Group = sub("\\..*", "", newcond3),
+    Time = sub(".*\\.", "", newcond3),
+    Group = factor(Group, levels = c("NO", "OB", "POB")),
+    Time = factor(Time, levels = c("f", "h")),
+    FillColor = case_when(
+      Group == "NO" ~ "dodgerblue",
+      Group == "OB" ~ "orange",
+      Group == "POB" ~ "forestgreen"
+    ),
+    AlphaVal = ifelse(Time == "f", 0.3, 0.8),
+    Cond = newcond3
+  )
+
+# 検定対象の条件ペア
+comparisons <- list(c("NO.f", "NO.h"), c("OB.f", "OB.h"), c("POB.f", "POB.h"))
+
+# 各ペアでt検定し、p値とアスタリスク記号を取得
+pvals <- sapply(comparisons, function(pair) {
+  vals1 <- plot_df$Expression[plot_df$Cond == pair[1]]
+  vals2 <- plot_df$Expression[plot_df$Cond == pair[2]]
+  if (length(vals1) >= 2 && length(vals2) >= 2) {
+    t.test(vals1, vals2)$p.value
+  } else {
+    NA
+  }
+})
+
+# アスタリスクレベルを決定
+stars <- sapply(pvals, function(p) {
+  if (is.na(p)) return(NA)
+  else if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+
+# 有意な比較のみ抽出
+sig_comparisons <- comparisons[!is.na(stars)]
+sig_stars <- stars[!is.na(stars)]
+
+# プロット
+ggplot(plot_df, aes(x = Cond, y = Expression, fill = FillColor, alpha = AlphaVal)) +
+  geom_boxplot(outlier.alpha = 0.2, color = "gray30") +
+  geom_jitter(width = 0.2, size = 2) +
+  scale_fill_identity() +
+  scale_alpha_identity() +
+  geom_signif(
+    comparisons = sig_comparisons,
+    annotations = sig_stars,
+    tip_length = 0.01,
+    textsize = 5,
+    color = "black"  # 横棒とアスタリスクを黒で描画
+  ) +
+  theme_minimal() +
+  labs(
+    title = paste0(target_gene, " expression (CPM) across conditions"),
+    x = "Condition", y = "CPM (Counts per Million)"
+  )
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(edgeR)
+library(ggsignif)
+
+# CPMに変換
+cpm_matrix <- cpm(dge, log = FALSE)
+
+# 遺伝子指定
+target_gene <- "SLC2A4"
+tss_rows <- grep(paste0("^", target_gene), rownames(cpm_matrix), value = TRUE)
+expr_values <- colSums(cpm_matrix[tss_rows, , drop = FALSE])
+
+# データ整形
+plot_df <- data.frame(Sample = names(expr_values), Expression = expr_values)
+plot_df <- left_join(plot_df, cohort, by = c("Sample" = "Cond"))
+
+# 条件情報を加工
+plot_df <- plot_df %>%
+  mutate(
+    Group = sub("\\..*", "", newcond3),
+    Time = sub(".*\\.", "", newcond3),
+    Group = factor(Group, levels = c("NO", "OB", "POB")),
+    Time = factor(Time, levels = c("f", "h")),
+    FillColor = case_when(
+      Group == "NO" ~ "dodgerblue",
+      Group == "OB" ~ "orange",
+      Group == "POB" ~ "forestgreen"
+    ),
+    AlphaVal = ifelse(Time == "f", 0.3, 0.8),
+    Cond = newcond3
+  )
+
+# 検定対象の条件ペア
+comparisons <- list(c("NO.f", "NO.h"), c("OB.f", "OB.h"), c("POB.f", "POB.h"))
+
+# 各ペアでt検定し、p値とアスタリスク記号を取得
+pvals <- sapply(comparisons, function(pair) {
+  vals1 <- plot_df$Expression[plot_df$Cond == pair[1]]
+  vals2 <- plot_df$Expression[plot_df$Cond == pair[2]]
+  if (length(vals1) >= 2 && length(vals2) >= 2) {
+    t.test(vals1, vals2)$p.value
+  } else {
+    NA
+  }
+})
+
+# アスタリスクレベルを決定
+stars <- sapply(pvals, function(p) {
+  if (is.na(p)) return(NA)
+  else if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+
+# 有意な比較のみ抽出
+sig_comparisons <- comparisons[!is.na(stars)]
+sig_stars <- stars[!is.na(stars)]
+
+# プロット
+ggplot(plot_df, aes(x = Cond, y = Expression, fill = FillColor, alpha = AlphaVal)) +
+  geom_boxplot(outlier.alpha = 0.2, color = "gray30") +
+  geom_jitter(width = 0.2, size = 2) +
+  scale_fill_identity() +
+  scale_alpha_identity() +
+  geom_signif(
+    comparisons = sig_comparisons,
+    annotations = sig_stars,
+    tip_length = 0.01,
+    textsize = 5,
+    color = "black"  # 横棒とアスタリスクを黒で描画
+  ) +
+  theme_minimal() +
+  labs(
+    title = paste0(target_gene, " expression (CPM) across conditions"),
+    x = "Condition", y = "CPM (Counts per Million)"
+  )
+```
+
+```{r}
+
+library(ggplot2)
+library(dplyr)
+library(edgeR)
+library(ggsignif)
+
+# CPMに変換
+cpm_matrix <- cpm(dge, log = FALSE)
+
+# 遺伝子指定
+target_gene <- "PPARGC1A"
+tss_rows <- grep(paste0("^", target_gene), rownames(cpm_matrix), value = TRUE)
+expr_values <- colSums(cpm_matrix[tss_rows, , drop = FALSE])
+
+# データ整形
+plot_df <- data.frame(Sample = names(expr_values), Expression = expr_values)
+plot_df <- left_join(plot_df, cohort, by = c("Sample" = "Cond"))
+
+# 条件情報を加工
+plot_df <- plot_df %>%
+  mutate(
+    Group = sub("\\..*", "", newcond3),
+    Time = sub(".*\\.", "", newcond3),
+    Group = factor(Group, levels = c("NO", "OB", "POB")),
+    Time = factor(Time, levels = c("f", "h")),
+    FillColor = case_when(
+      Group == "NO" ~ "dodgerblue",
+      Group == "OB" ~ "orange",
+      Group == "POB" ~ "forestgreen"
+    ),
+    AlphaVal = ifelse(Time == "f", 0.3, 0.8),
+    Cond = newcond3
+  )
+
+# 検定対象の条件ペア
+comparisons <- list(c("NO.f", "NO.h"), c("OB.f", "OB.h"), c("POB.f", "POB.h"))
+
+# 各ペアでt検定し、p値とアスタリスク記号を取得
+pvals <- sapply(comparisons, function(pair) {
+  vals1 <- plot_df$Expression[plot_df$Cond == pair[1]]
+  vals2 <- plot_df$Expression[plot_df$Cond == pair[2]]
+  if (length(vals1) >= 2 && length(vals2) >= 2) {
+    t.test(vals1, vals2)$p.value
+  } else {
+    NA
+  }
+})
+
+# アスタリスクレベルを決定
+stars <- sapply(pvals, function(p) {
+  if (is.na(p)) return(NA)
+  else if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+
+# 有意な比較のみ抽出
+sig_comparisons <- comparisons[!is.na(stars)]
+sig_stars <- stars[!is.na(stars)]
+
+# プロット
+ggplot(plot_df, aes(x = Cond, y = Expression, fill = FillColor, alpha = AlphaVal)) +
+  geom_boxplot(outlier.alpha = 0.2, color = "gray30") +
+  geom_jitter(width = 0.2, size = 2) +
+  scale_fill_identity() +
+  scale_alpha_identity() +
+  geom_signif(
+    comparisons = sig_comparisons,
+    annotations = sig_stars,
+    tip_length = 0.01,
+    textsize = 5,
+    color = "black"  # 横棒とアスタリスクを黒で描画
+  ) +
+  theme_minimal() +
+  labs(
+    title = paste0(target_gene, " expression (CPM) across conditions"),
+    x = "Condition", y = "CPM (Counts per Million)"
+  )
+
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(edgeR)
+library(ggsignif)
+
+# CPMに変換
+cpm_matrix <- cpm(dge, log = FALSE)
+
+# 遺伝子指定
+target_gene <- "PPARG"
+tss_rows <- grep(paste0("^", target_gene), rownames(cpm_matrix), value = TRUE)
+expr_values <- colSums(cpm_matrix[tss_rows, , drop = FALSE])
+
+# データ整形
+plot_df <- data.frame(Sample = names(expr_values), Expression = expr_values)
+plot_df <- left_join(plot_df, cohort, by = c("Sample" = "Cond"))
+
+# 条件情報を加工
+plot_df <- plot_df %>%
+  mutate(
+    Group = sub("\\..*", "", newcond3),
+    Time = sub(".*\\.", "", newcond3),
+    Group = factor(Group, levels = c("NO", "OB", "POB")),
+    Time = factor(Time, levels = c("f", "h")),
+    FillColor = case_when(
+      Group == "NO" ~ "dodgerblue",
+      Group == "OB" ~ "orange",
+      Group == "POB" ~ "forestgreen"
+    ),
+    AlphaVal = ifelse(Time == "f", 0.3, 0.8),
+    Cond = newcond3
+  )
+
+# 検定対象の条件ペア
+comparisons <- list(c("NO.f", "NO.h"), c("OB.f", "OB.h"), c("POB.f", "POB.h"))
+
+# 各ペアでt検定し、p値とアスタリスク記号を取得
+pvals <- sapply(comparisons, function(pair) {
+  vals1 <- plot_df$Expression[plot_df$Cond == pair[1]]
+  vals2 <- plot_df$Expression[plot_df$Cond == pair[2]]
+  if (length(vals1) >= 2 && length(vals2) >= 2) {
+    t.test(vals1, vals2)$p.value
+  } else {
+    NA
+  }
+})
+
+# アスタリスクレベルを決定
+stars <- sapply(pvals, function(p) {
+  if (is.na(p)) return(NA)
+  else if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+
+# 有意な比較のみ抽出
+sig_comparisons <- comparisons[!is.na(stars)]
+sig_stars <- stars[!is.na(stars)]
+
+# プロット
+ggplot(plot_df, aes(x = Cond, y = Expression, fill = FillColor, alpha = AlphaVal)) +
+  geom_boxplot(outlier.alpha = 0.2, color = "gray30") +
+  geom_jitter(width = 0.2, size = 2) +
+  scale_fill_identity() +
+  scale_alpha_identity() +
+  geom_signif(
+    comparisons = sig_comparisons,
+    annotations = sig_stars,
+    tip_length = 0.01,
+    textsize = 5,
+    color = "black"  # 横棒とアスタリスクを黒で描画
+  ) +
+  theme_minimal() +
+  labs(
+    title = paste0(target_gene, " expression (CPM) across conditions"),
+    x = "Condition", y = "CPM (Counts per Million)"
+  )
+
+
+```
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(edgeR)
+library(ggsignif)
+
+# CPMに変換
+cpm_matrix <- cpm(dge, log = FALSE)
+
+# 遺伝子指定
+target_gene <- "ADIPOQ"
+tss_rows <- grep(paste0("^", target_gene), rownames(cpm_matrix), value = TRUE)
+expr_values <- colSums(cpm_matrix[tss_rows, , drop = FALSE])
+
+# データ整形
+plot_df <- data.frame(Sample = names(expr_values), Expression = expr_values)
+plot_df <- left_join(plot_df, cohort, by = c("Sample" = "Cond"))
+
+# 条件情報を加工
+plot_df <- plot_df %>%
+  mutate(
+    Group = sub("\\..*", "", newcond3),
+    Time = sub(".*\\.", "", newcond3),
+    Group = factor(Group, levels = c("NO", "OB", "POB")),
+    Time = factor(Time, levels = c("f", "h")),
+    FillColor = case_when(
+      Group == "NO" ~ "dodgerblue",
+      Group == "OB" ~ "orange",
+      Group == "POB" ~ "forestgreen"
+    ),
+    AlphaVal = ifelse(Time == "f", 0.3, 0.8),
+    Cond = newcond3
+  )
+
+# 検定対象の条件ペア
+comparisons <- list(c("NO.f", "NO.h"), c("OB.f", "OB.h"), c("POB.f", "POB.h"))
+
+# 各ペアでt検定し、p値とアスタリスク記号を取得
+pvals <- sapply(comparisons, function(pair) {
+  vals1 <- plot_df$Expression[plot_df$Cond == pair[1]]
+  vals2 <- plot_df$Expression[plot_df$Cond == pair[2]]
+  if (length(vals1) >= 2 && length(vals2) >= 2) {
+    t.test(vals1, vals2)$p.value
+  } else {
+    NA
+  }
+})
+
+# アスタリスクレベルを決定
+stars <- sapply(pvals, function(p) {
+  if (is.na(p)) return(NA)
+  else if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+
+# 有意な比較のみ抽出
+sig_comparisons <- comparisons[!is.na(stars)]
+sig_stars <- stars[!is.na(stars)]
+
+# プロット
+p <- ggplot(plot_df, aes(x = Cond, y = Expression, fill = FillColor, alpha = AlphaVal)) +
+  geom_boxplot(outlier.alpha = 0.2, color = "gray30") +
+  geom_jitter(width = 0.2, size = 2) +
+  scale_fill_identity() +
+  scale_alpha_identity() +
+  theme_minimal() +
+  labs(
+    title = paste0(target_gene, " expression (CPM) across conditions"),
+    x = "Condition", y = "CPM (Counts per Million)"
+  )
+
+# アスタリスクがあれば追加する
+if (length(sig_stars) > 0) {
+  p <- p + geom_signif(
+    comparisons = sig_comparisons,
+    annotations = sig_stars,
+    tip_length = 0.01,
+    textsize = 5,
+    color = "black"
+  )
+}
+
+# 表示
+print(p)
+
+```
+changed the code because without significant difference the former code put out an error and cannnot plot.
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(edgeR)
+library(ggsignif)
+
+# CPMに変換
+cpm_matrix <- cpm(dge, log = FALSE)
+
+# 遺伝子指定
+target_gene <- "IL6"
+tss_rows <- grep(paste0("^", target_gene), rownames(cpm_matrix), value = TRUE)
+expr_values <- colSums(cpm_matrix[tss_rows, , drop = FALSE])
+
+# データ整形
+plot_df <- data.frame(Sample = names(expr_values), Expression = expr_values)
+plot_df <- left_join(plot_df, cohort, by = c("Sample" = "Cond"))
+
+# 条件情報を加工
+plot_df <- plot_df %>%
+  mutate(
+    Group = sub("\\..*", "", newcond3),
+    Time = sub(".*\\.", "", newcond3),
+    Group = factor(Group, levels = c("NO", "OB", "POB")),
+    Time = factor(Time, levels = c("f", "h")),
+    FillColor = case_when(
+      Group == "NO" ~ "dodgerblue",
+      Group == "OB" ~ "orange",
+      Group == "POB" ~ "forestgreen"
+    ),
+    AlphaVal = ifelse(Time == "f", 0.3, 0.8),
+    Cond = newcond3
+  )
+
+# 検定対象の条件ペア
+comparisons <- list(c("NO.f", "NO.h"), c("OB.f", "OB.h"), c("POB.f", "POB.h"))
+
+# 各ペアでt検定し、p値とアスタリスク記号を取得
+pvals <- sapply(comparisons, function(pair) {
+  vals1 <- plot_df$Expression[plot_df$Cond == pair[1]]
+  vals2 <- plot_df$Expression[plot_df$Cond == pair[2]]
+  if (length(vals1) >= 2 && length(vals2) >= 2) {
+    t.test(vals1, vals2)$p.value
+  } else {
+    NA
+  }
+})
+
+# アスタリスクレベルを決定
+stars <- sapply(pvals, function(p) {
+  if (is.na(p)) return(NA)
+  else if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+
+# 有意な比較のみ抽出
+sig_comparisons <- comparisons[!is.na(stars)]
+sig_stars <- stars[!is.na(stars)]
+
+# プロット
+p <- ggplot(plot_df, aes(x = Cond, y = Expression, fill = FillColor, alpha = AlphaVal)) +
+  geom_boxplot(outlier.alpha = 0.2, color = "gray30") +
+  geom_jitter(width = 0.2, size = 2) +
+  scale_fill_identity() +
+  scale_alpha_identity() +
+  theme_minimal() +
+  labs(
+    title = paste0(target_gene, " expression (CPM) across conditions"),
+    x = "Condition", y = "CPM (Counts per Million)"
+  )
+
+# アスタリスクがあれば追加する
+if (length(sig_stars) > 0) {
+  p <- p + geom_signif(
+    comparisons = sig_comparisons,
+    annotations = sig_stars,
+    tip_length = 0.01,
+    textsize = 5,
+    color = "black"
+  )
+}
+
+# 表示
+print(p)
+```
+
+
+
+TSS
+```{r}
+library(ineq)
+library(entropy)
+
+# 1. 読み込み
+exp_raw <- read.table("ExpressionTable_annotated.txt", header = TRUE, sep = "\t", stringsAsFactors = FALSE, fill = TRUE)
+
+# 2. NAを除外して処理
+exp_clean <- exp_raw[!is.na(exp_raw[, 1]), ]
+rownames(exp_clean) <- make.unique(exp_clean[, 1])
+exp_matrix <- apply(exp_clean[, -1], 2, as.numeric)
+
+# 3. ベース遺伝子名を取得（.1, .2 を削除）
+base_gene <- sub("\\.\\d+$", "", rownames(exp_clean))
+
+# 4. 各ベース遺伝子ごとにTSSの分布から多様性指標を計算
+calc_tss_diversity <- function(expr_mat, base_names) {
+  gene_list <- unique(base_names)
+  results <- data.frame(Gene = gene_list, NumTSS = NA, Entropy = NA, Gini = NA)
+
+  for (i in seq_along(gene_list)) {
+    g <- gene_list[i]
+    idx <- which(base_names == g)
+    if (length(idx) < 2) next  # 単一TSSは除外 or Entropy=0とする
+
+    # 各TSSの発現量を合計（Across samples）
+    tss_expr <- rowSums(expr_mat[idx, , drop = FALSE], na.rm = TRUE)
+
+    # 割合（確率分布）に変換
+    tss_frac <- tss_expr / sum(tss_expr)
+
+    # Shannon entropy
+    ent <- entropy::entropy(tss_frac, unit = "log2")  # 情報量
+
+    # Gini係数（偏り）
+    gini <- ineq::Gini(tss_frac)
+
+    results[i, "NumTSS"] <- length(idx)
+    results[i, "Entropy"] <- ent
+    results[i, "Gini"] <- gini
+  }
+  return(na.omit(results))
+}
+
+# 実行
+diversity_df <- calc_tss_diversity(exp_matrix, base_gene)
+
+# 確認
+head(diversity_df)
+
+library(ggplot2)
+
+# 1. NumTSS > 40 の遺伝子だけ抽出
+many_tss <- diversity_df[diversity_df$NumTSS > 40, ]
+# 2. プロット本体
+ggplot(diversity_df, aes(x = NumTSS, y = Entropy)) +
+  geom_jitter(width = 0.2, alpha = 0.6) +
+  geom_smooth(method = "lm") +
+  geom_text_repel(data = many_tss, aes(label = Gene), size = 3, color = "red") +
+  theme_minimal() +
+  labs(
+    title = "TSS number and Shannon entropy",
+    x = "TSS number",
+    y = "Shannon Entropy"
+  )
+
+# 例2: Gini vs Entropy（相関チェック）
+ggplot(diversity_df, aes(x = Gini, y = Entropy)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(title = "TSS usage bias (Gini) and Entropy", x = "Gini coefficient", y = "Shannon Entropy")
+```
+
+
+```{r}
+# logFCをres_NOから取得（行名＝Gene名）
+logfc_vec <- res_NO$logFC
+names(logfc_vec) <- rownames(res_NO)
+
+# Shannon/Gini用に使うベース遺伝子名と対応
+diversity_df$logFC <- logfc_vec[as.character(diversity_df$Gene)]
+
+# フィルター（必要ならNA除去）
+plot_df <- na.omit(diversity_df)
+```
+
+```{r}
+# scatter plot
+# 発現量（exp_matrix）からベース遺伝子ごとに合計
+total_expr <- tapply(rowSums(exp_matrix, na.rm = TRUE), base_gene, sum)
+diversity_df$TotalExpression <- total_expr[diversity_df$Gene]
+
+# 散布図（log scale）
+library(ggplot2)
+ggplot(diversity_df, aes(x = NumTSS, y = log10(TotalExpression + 1))) +
+  geom_jitter(width = 0.2, alpha = 0.6) +
+  geom_smooth(method = "lm") +
+  theme_minimal() +
+  labs(title = "TSS number and expression (NO)", x = "TSS number", y = "log10(expression + 1)")
+```
+
+shannon entropy
+```{r}
+ggplot(plot_df, aes(x = Entropy, y = logFC)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(title = "Shannon Entropy and fold change (NO)", x = "Shannon Entropy", y = "log2 Fold Change")
+```
+nothing interesting.
+
+```{r}
+ggplot(plot_df, aes(x = as.factor(NumTSS), y = logFC)) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  theme_bw() +
+  labs(title = "fold change (NO) by TSS number", x = "TSS number", y = "log2 Fold Change")
+```
+nothing interesting.
+
+Gini coefficient
+```{r}
+plot_df$GiniGroup <- cut(plot_df$Gini, breaks = quantile(plot_df$Gini, probs = c(0, 0.33, 0.67, 1)),
+                         labels = c("Low", "Medium", "High"), include.lowest = TRUE)
+
+ggplot(plot_df, aes(x = GiniGroup, y = logFC)) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  theme_bw() +
+  labs(title = "Gini coefficient and fold change (NO)", x = "Gini Group", y = "log2 Fold Change")
+```
+no difference.
+
