@@ -8,5 +8,6 @@ repository for KI-UT joint bioinfo course
 - assignment1.Rmd -> original R markdown file
 
 ### Week2 (hands-on)
+Re-analysis of [(Mileti et al 2021 diabetes]https://doi.org/10.2337/db21-0001)
 - exam.Rmd -> original R markdown file
 - [exam.html](https://junichiro-ui.github.io/ki-ut-course/week2/exam.html) -> html file knitted from R markdown
